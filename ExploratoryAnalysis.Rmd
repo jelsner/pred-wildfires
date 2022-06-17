@@ -1,5 +1,5 @@
 ---
-title: "Seasonal Prediction of Natural Wildfires in the Apalachicola National Forest (ANF): Exploratory Analysis"
+title: "Seasonal Prediction of Wildfires in the Apalachicola National Forest (ANF): Exploratory Analysis"
 output: html_document
 editor_options: 
   chunk_output_type: console
@@ -141,69 +141,98 @@ tmap::tm_shape(Airport.sf) +
   tmap::tm_dots(size = .1, col = "black") 
 ```
 
+Monthly occurrence (relative frequency) of wildfires in the ANF.
+```{r}
+df <- Fires.sf |>
+  sf::st_drop_geometry() |>
+  dplyr::group_by(Month, .drop = FALSE) |>
+  dplyr::summarize(nF = dplyr::n(),
+                   perF = nF/nrow(Fires.sf))
+
+ggplot(data = df,
+      mapping = aes(x = Month, 
+                    y = perF,
+                    fill = perF)) +
+  geom_col() +
+  scale_fill_distiller(palette = "Oranges",
+                       direction = 1,
+                       guide = "none") +
+  scale_y_continuous(labels = scales::percent_format(1L)) +
+  labs(x = "", y = "Wildfire frequency") +
+  theme_minimal() 
+```
+
 Graphs showing the annual seasonal number of fires and annual seasonal number of acres burned
 ```{r}
 df <- Fires.sf |>
   sf::st_drop_geometry() |>
+#  dplyr::filter(NWCG_CAUSE_CLASSIFICATION == "Natural") |>
   dplyr::filter(Month %in% c("May", "Jun", "Jul")) |>
   dplyr::mutate(YearF = factor(Year, 
                                levels = as.character(1992:2018), 
                                ordered = TRUE)) |>
   dplyr::group_by(YearF, .drop = FALSE) |>
   dplyr::summarize(nFires = dplyr::n(),
-                   totalAcresBurned = sum(FIRE_SIZE)) |>
+                   totalAcresBurned = sum(FIRE_SIZE),
+                   AvgSizeCategory = mean(Size)) |>
   dplyr::mutate(Year = 1992:2018)
 
-ggplot(data = df,
-       mapping = aes(x = Year, 
-                     y = nFires)) +
-  geom_col() +
+p1 <- ggplot(data = df,
+             mapping = aes(x = Year, 
+                           y = nFires)) +
+  geom_point() +
   scale_x_continuous(breaks = seq(1992, 2018, by = 2)) +
   theme_minimal() +
   labs(x = "", y = "Number of wildfires")
 
-ggplot(data = df,
-       mapping = aes(x = Year, 
-                     y = totalAcresBurned)) +
+p2 <- ggplot(data = df,
+             mapping = aes(x = Year, 
+                           y = totalAcresBurned)) +
   geom_point() +
   scale_x_continuous(breaks = seq(1992, 2018, by = 2)) +
   scale_y_log10(limits = c(1, 30000)) +
   theme_minimal() +
   labs(x = "", y = "Total acres burned")
 
-
-
-ggplot(data = df,
-       mapping = aes(x = Year, 
-                     y = nFires, 
-                     color = totalAcresBurned)) +
-  geom_line(col = "gray80") +
-  geom_point(mapping = aes(size = totalAcresBurned)) +
-  scale_size_continuous(guide = "none") +
-  scale_color_distiller(palette = "Oranges",
-                        direction = 1,
-                        guide = "none") +
-  scale_x_continuous(breaks = seq(1992, 2018, by = 4)) +
+p3 <- ggplot(data = df,
+             mapping = aes(x = Year, 
+                           y = AvgSizeCategory)) +
+  geom_point() +
+  scale_x_continuous(breaks = seq(1992, 2018, by = 2)) +
   theme_minimal() +
-  labs(x = "", y = "Number of wildfires",
-       title = "Large inter-seasonal variability in the number of natural wildfires in the ANF",
-       subtitle = "Larger and darker points indicate larger burn area")
+  labs(x = "", y = "Average size category")
 
-ggplot(data = df,
-       mapping = aes(x = Year, 
-                     y = totalAcresBurned, 
-                     color = nFires)) +
-  geom_line(col = "gray80") +
-  geom_point(mapping = aes(size = nFires)) +
-  scale_size_continuous(guide = "none") +
-  scale_color_distiller(palette = "Oranges",
-                        direction = 1,
-                        guide = "none") +
-  scale_x_continuous(breaks = seq(1992, 2018, by = 3)) +
-  theme_minimal() +
-  labs(x = "", y = "",
-       title = "Large inter-seasonal variability in acres burned from natural wildfires in the ANF",
-       subtitle = "Larger and darker color points indicate more fires")
+
+library(patchwork)
+p1 / p3
+```
+
+Annual statistics
+```{r}
+range(df$nFires)
+df$Year[df$nFires == max(df$nFires)]
+mean(df$nFires); var(df$nFires)
+```
+
+Seasonal temporal autocorrelation in frequency and total area burned.
+```{r}
+plot(acf(df$nFires))
+plot(acf(df$totalAcresBurned))
+cor.test(df$nFires, df$totalAcresBurned)
+cor.test(df$nFires, df$AvgSizeCategory)
+cor.test(df$nFires[-1], df$totalAcresBurned[-24])
+```
+
+No significant inter-seasonal autocorrelation. Significant correlation between number of fires and burned area as expected.
+
+Make fire size an ordered factor and create a model that predicts the probability by size category similar to what we did for predicting tornado EF rating. See `PredictTorFreqByEF.Rmd` in the `EF-dist` distribution.
+```{r}
+Fires.sf |>
+  sf::st_drop_geometry() |>
+  dplyr::group_by(Size) |>
+  dplyr::summarize(nFires = dplyr::n(),
+                   Range1 = range(FIRE_SIZE)[1],
+                   Range2 = range(FIRE_SIZE)[2])
 ```
 
 ## TLH WSO weather data
@@ -253,333 +282,199 @@ AnnualRainfall |>
   dplyr::arrange(totalRainfallcm)
 ```
 
-
-
-
-
-
-
-
-Create a new data frame containing only the natural-caused wildfires and one containing all fires.
-```{r}
-NaturalFires.sf <- Fires.sf |>
-  filter(NWCG_GENERAL_CAUSE == "Natural") |>
-  mutate(Year = year(DISCOVERY_DATE),
-         Month = month(DISCOVERY_DATE),
-         Day = day(DISCOVERY_DATE),
-         YDay = yday(DISCOVERY_DATE),
-         YDayF = factor(YDay, levels = as.character(1:366)),
-         SizeF = factor(FIRE_SIZE_CLASS, ordered = TRUE)) |>
-  dplyr::select(Year, Month, Day, YDay, YDayF, Size = FIRE_SIZE, SizeF)
-
-AllFires.sf <- Fires.sf |>
-  mutate(Year = year(DISCOVERY_DATE),
-         Month = month(DISCOVERY_DATE),
-         Day = day(DISCOVERY_DATE),
-         YDay = yday(DISCOVERY_DATE),
-         YDayF = factor(YDay, levels = as.character(1:366)),
-         SizeF = factor(FIRE_SIZE_CLASS, ordered = TRUE)) |>
-  dplyr::select(Year, Month, Day, YDay, YDayF, Size = FIRE_SIZE, SizeF)
-```
-
-Draw a static map showing the location of the natural-caused wildfires by size of area burned.
-```{r}
-FL_Counties.sf <- us_counties(states = "FL",
-                              resolution = "high") %>%
-  st_transform(crs = st_crs(ANF_Boundary.sf)) %>%
-  st_crop(st_bbox(st_buffer(ANF_Boundary.sf, dist = .25)) )
-
-ggplot() +
-  geom_sf(data = FL_Counties.sf, fill = "transparent", col = "gray80") +
-  geom_sf(data = ANF_Boundary.sf, fill = "transparent") +
-  geom_sf(data = NaturalFires.sf,
-          mapping = aes(col = SizeF)) +
-  scale_color_brewer(palette = "Oranges",
-                     direction = 1,
-                     name = "Size Class") +
-  theme_bw() +
-  labs(title = "Location of natural-caused wildfires in the Apalachicola National Forest (1992-2018)",
-       subtitle = "Darker color points indicates the fire resulted in a larger burn area",
-       caption = "Data source: Short, Karen (2021)")
-```
-
-Are the locations of natural-caused wildfires during May, June, and July within the ANF clustered?
-
-Create a {spatstat} object containing the locations of lightning-kindled fires in the ANF during May-July. Get a planar projection suggested from `suggest_crs()`. Here projected 2779 NAD83(HARN) / Florida North
-```{r}
-library(spatstat)
-library(maptools)
-#remotes::install_github("walkerke/crsuggest")
-library(crsuggest)
-
-suggest_crs(ANF_Boundary.sf)
-
-W <- ANF_Boundary.sf %>% 
-  st_transform(crs = 2779) %>%
-  as_Spatial() %>% 
-  as.owin()
-
-NF.ppp <- NaturalFires.sf %>% 
-#  filter(Month %in% c(5, 6, 7)) %>%
-  st_geometry() %>%
-  st_transform(crs = 2779) %>%
-  as_Spatial() %>% 
-  as.ppp()
-
-NF.ppp <- NF.ppp[W] %>%
-  rescale(s = 1000, 
-          unitname = "km")
-summary(NF.ppp)
-```
-
-Area is 2,564 square km. There are 356 natural wildfires for an average spatial intensity of 13.9 fires per 10 square kilometer during May-July over the 27-year period.
-```{r}
-NF.ppp %>%
-  density() %>%
-  plot()
-
-NF.ppp %>%
-  dirichlet() %>%
-  plot()
-
-NF.ppp %>%
-  quadratcount(nx = 20, ny = 15) %>%
-  plot()
-
-NF.ppp %>%
-  quadrat.test(nx = 20, ny = 15,
-               method = "M",
-               nsim = 9999,
-               alternative = "clustered")
-```
-
-There is some weak evidence that the locations are clustered. But the evidence is not strong.
-
-Compute Ripley K using the `Kstat()` function
-```{r}
-df <- NF.ppp %>%
-  envelope(fun = Kest,
-           nsim = 100,
-           global = TRUE,
-           nrank = 1) %>%
-  as.data.frame()
-
-df <- df %>%
-  mutate(theo = theo * intensity(NF.ppp),
-         obs = obs * intensity(NF.ppp),
-         lo = lo * intensity(NF.ppp),
-         hi = hi * intensity(NF.ppp))
-
-ggplot(data = df,
-       mapping = aes(x = r, y = obs)) +
-  geom_ribbon(aes(ymin = lo, 
-                  ymax = hi), fill = "gray80") +
-  geom_line(col = "orange") +
-  geom_line(aes(y = theo), color = "white") +
-  xlab("Distance (km)") + ylab("K(r)") +
-  labs(title = "Locations of natural wildfires in the ANF are inconsistent with a random process",
-       subtitle = "Average observed (orange) versus modeled (white) number of additional wildfires within a distance r of a random wildfire.\nThe gray ribbon is the 99% uncertainy band based on 100 simulations from the spatial random process model.") +
-  theme_minimal()
-```
-
-At longer lags there are features that make natural fires somewhat more or less likely (e.g., Bradwell Bay Wilderness--swamp) 
-
-Monthly occurrence (relative frequency) of natural wildfires in the ANF.
-```{r}
-df <- NaturalFires.sf |>
-  st_drop_geometry() |>
-  mutate(MonthF = factor(month.abb[Month], 
-                         levels = month.abb, 
-                         ordered = TRUE)) |>
-  group_by(MonthF, .drop = FALSE) |>
-  summarize(nF = n(),
-            perF = nF/nrow(NaturalFires.sf))
-
-p1 <- ggplot(data = df,
-       mapping = aes(x = MonthF, 
-                     y = perF,
-                     fill = perF)) +
-  geom_col() +
-  scale_fill_distiller(palette = "Oranges",
-                       direction = 1,
-                       guide = "none") +
-  scale_y_continuous(labels = scales::percent_format(1L)) +
-  labs(title = "A", x = "", y = "Wildfire frequency") +
-#  labs(title = "Over 80% of natural wildfires in the Apalachicola National Forest occur during May-July",
-#       subtitle = "Percentage of all natural wildfires by month",
-#       caption = "Period of record: 1992-2018, Data source: Short, Karen (2021)") +
-  theme_minimal() 
-```
-
-
-
-Annual statistics
-```{r}
-df$Year[df$nFires == 0]
-max(df$nFires)
-df$Year[df$nFires == max(df$nFires)]
-mean(df$nFires); var(df$nFires)
-```
-
-Seasonal temporal autocorrelation in frequency and total area burned.
-```{r}
-plot(acf(df$nFires))
-plot(acf(df$totalAcresBurned))
-cor.test(df$nFires, df$totalAcresBurned)
-cor.test(df$nFires[-1], df$totalAcresBurned[-24])
-```
-
-No significant inter-seasonal autocorrelation. Significant correlation between number of fires and burned area as expected.
-
-Future work: Make fire size an ordered factor and create a model that predicts the probability by size category similar to what we did for predicting tornado EF rating. See `PredictTorFreqByEF.Rmd` in the `EF-dist` distribution.
-```{r}
-NaturalFires.sf |>
-  group_by(SizeF) |>
-  summarize(nFires = n(),
-            Range1 = range(Size)[1],
-            Range2 = range(Size)[2])
-```
-
-## Get TLH airport daily weather data and compute the Keetch & Byram drought index
-
-Original paper outlining the rationale and how to create it: https://www.srs.fs.usda.gov/pubs/rp/rp_se038.pdf
-
-
-Plot average daily mean wind speeds during May-July by year.
-```{r}
-TLH.df |>
-  filter(Year >= 1984) |>
-  filter(month %in% c("May", "Jun", "Jul")) |>
-  group_by(Year) |>
-  summarize(AvgWindSpeed = mean(AWND) / 10) |>
-ggplot(mapping = aes(x = Year, y = AvgWindSpeed)) +
-  geom_point() +
-  geom_smooth(method = lm)
-```
-
-Plot average daily minimum during May-July by year.
-```{r}
-TLH.df |>
-  filter(month %in% c("May", "Jun", "Jul")) |>
-  group_by(Year) |>
-  summarize(AvgMinTemp = mean(MinTemp, na.rm = TRUE)) |>
-ggplot(mapping = aes(x = Year, y = AvgMinTemp)) +
-  geom_point() +
-  geom_smooth(method = lm) +
-  labs(y = "Average minimum temperature (F)") +
-  theme_minimal()
-```
-
-Plot monthly values of average daily high temperature and average month rainfall.
-```{r}
-df <- TLH.df %>%
-  filter(Year >= 1943 & Year <= 2020) %>%
-  group_by(month) %>%
-  summarize(totalRain = sum(Rainfall24mm / 10),
-            avgMonthlyTotalRain = totalRain/(2020 - 1943 + 1),
-            avgDailyHighTemp = mean(MaxTemp))
-
-p1 <- ggplot(data = df,
-             mapping = aes(x = month, y = avgMonthlyTotalRain, fill = avgMonthlyTotalRain)) +
-        geom_col() +
-        scale_fill_distiller(palette = "Greens",
-                         direction = 1, 
-                         guide = 'none') +
-        theme_minimal() +
-        labs(x = "", y = "Rainfall (cm)", title = "A")
-
-p2 <- ggplot(data = df,
-             mapping = aes(x = month, y = avgDailyHighTemp, color = avgDailyHighTemp)) +
-        geom_point(size = 4) +
-        scale_color_distiller(palette = "Reds",
-                              direction = 1, 
-                              guide = 'none') +
-        scale_y_continuous(limits = c(60, 100)) +
-        theme_minimal() +
-        labs(x = "", y = "Temperature (°F)", title = "B")
-
-library(patchwork)
-p1 / p2
-```
+## Compute KBDI
 
 Compute daily values of the KBDI. Original paper outlining the rationale and how to create it: https://www.srs.fs.usda.gov/pubs/rp/rp_se038.pdf with a minor correction identified in Alexander1992.pdf (paper found in Dropbox/Literature).
 
 Step one: Compute net rainfall on each day. Units are inches.
 ```{r}
-source("netRainfall.R")
+source(here::here("scripts", "netRainfall.R"))
 TLH.df$NetR <- netRainfall(Rainfall24 = TLH.df$Rainfall24)
 ```
 
 Step two: Compute daily drought index. Units of temperature are degrees F. Q is set initially to 400. The influence of this start value diminishes to zero after a few months R is the annual average rainfall for TLH in inches
 ```{r}
-source("droughtIndex.R")
-DI <- droughtIndex(Q = 400, R = 60, MaxTemp = TLH.df$MaxTemp, NetR = TLH.df$NetR)
+source(here::here("scripts", "droughtIndex.R"))
+DI <- droughtIndex(Q = 400, R = 60, 
+                   MaxTemp = TLH.df$MaxTemp, 
+                   NetR = TLH.df$NetR)
 TLH.df$Ql <- DI$Ql
 TLH.df$Qlm <- TLH.df$Ql * .254  # tenth of an inch to mm
 TLH.df$DroughtIndex <- DI$DroughtIndex
 ```
 
-Note: There is a package to compute the standardized precip-evapotranspiration index {SPEI}. Only good for monthly data. Same for the Palmer Drought Severity Index (PDSI).
-
 Daily
 ```{r}
 TLH.df <- TLH.df |>
-  filter(Year >= 1943) |>
-  mutate(Date2 = as.Date(doy - 1, origin = "2020-01-01"))
+  dplyr::filter(Year >= 1943) |>
+  dplyr::mutate(Date2 = as.Date(doy - 1, origin = "2020-01-01"))
 
-p1 <- ggplot(data = TLH.df, 
+ggplot(data = TLH.df, 
        mapping = aes(x = Date2, y = Year, fill = Qlm)) +
   geom_tile() +
   scale_y_reverse(breaks = seq(1945, 2020, by = 10)) +
-  scale_x_date(date_breaks = "month", date_labels = "%b", position = "top") +
+  scale_x_date(date_breaks = "month", 
+               date_labels = "%b", 
+               position = "top") +
   scale_fill_distiller(palette = "BrBG",
                        direction = -1,
                        name = "mm") +
-  labs(title = "A", x = "", y = "") +
+  labs(x = "", y = "") +
   theme_minimal() 
 ```
 
 Monthly average soil moisture deficit.
 ```{r}
-p2 <- TLH.df |>
-  mutate(MonthF = factor(month.abb[month], 
-                         levels = month.abb, 
-                         ordered = TRUE)) |>
-  group_by(MonthF, .drop = FALSE) |>
-  summarize(AvgSoilMoistureDeficit = mean(Qlm)) |>
-ggplot(mapping = aes(x = MonthF, 
+TLH.df |>
+  dplyr::mutate(Month = factor(month.abb[month], 
+                               levels = month.abb, 
+                               ordered = TRUE)) |>
+  dplyr::group_by(Month, .drop = FALSE) |>
+  dplyr::summarize(AvgSoilMoistureDeficit = mean(Qlm)) |>
+ggplot(mapping = aes(x = Month, 
                      y = AvgSoilMoistureDeficit,
                      fill = AvgSoilMoistureDeficit)) +
   geom_col() +
   scale_fill_distiller(palette = "BrBG",
                        direction = -1,
                        guide = 'none') +
-  labs(title = "B", y = "Soil Moisture Deficit (mm)", x = "") +
+  labs(y = "Soil moisture deficit (mm)", x = "") +
   theme_minimal() 
-
-p1 / p2
 ```
 
 Make some trend plots. This plot is statistically more realistic because it removes the temporal autocorrelations.
 ```{r}
-ggplot(TLH.df, aes(x = Date, y = Qlm, color = Qlm)) +
-  geom_line() +
-#  scale_color_gradientn(colors = terrain.colors(5), guide = 'none') +
-  scale_color_distiller(palette = "BrBG",
-                        direction = -1,
-                        guide = 'none') +
-  scale_x_date(date_breaks = "20 years", date_labels = "%Y") +
+TLH.df |>
+  dplyr::group_by(month, Year) |>
+  dplyr::summarise(MaxQlm = dplyr::last(Qlm)) |>
+  dplyr::filter(month == "Apr") |>
+ggplot(mapping = aes(x = Year, y = MaxQlm)) +
+  geom_point() +
+  geom_smooth(method = lm) +
   ylab("Soil moisture deficit (mm)") + xlab("") +
-  geom_smooth(method = lm, se = FALSE, color = "white") +
-  facet_wrap(~ month, ncol = 12) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
-#  labs(title = "Amount of water needed to bring soil moisture to full capacity in the Apalachicola National Forest",
-#       subtitle = "Daily soil moisture deficit (mm)", 
-#       caption = "Period of record: 1943-2020, Data source: NWSFO Tallahassee") 
+  theme_minimal() 
 ```
 
-Repeat using data from Apalachicola (see `compare.rmd`). https://www.ncdc.noaa.gov/  > I want to search for data at a particular location > DATA TOOLS > Final a Station
+## Combine seasonal fire data and KBDI
+
+```{r}
+All.df <- Fires.sf |>
+  sf::st_drop_geometry() |>
+  dplyr::filter(Month %in% c("May", "Jun", "Jul")) |>
+  dplyr::mutate(YearF = factor(Year, 
+                               levels = as.character(1992:2018), 
+                               ordered = TRUE)) |>
+  dplyr::group_by(YearF, .drop = FALSE) |>
+  dplyr::summarize(nFires = dplyr::n(),
+                   TAB = sum(FIRE_SIZE))
+
+Human.df <- Fires.sf |>
+  sf::st_drop_geometry() |>
+  dplyr::filter(NWCG_CAUSE_CLASSIFICATION == "Human") |>
+  dplyr::filter(Month %in% c("May", "Jun", "Jul")) |>
+  dplyr::mutate(YearF = factor(Year, 
+                               levels = as.character(1992:2018), 
+                               ordered = TRUE)) |>
+  dplyr::group_by(YearF, .drop = FALSE) |>
+  dplyr::summarize(nFires = dplyr::n(),
+                   TAB = sum(FIRE_SIZE))
+
+Natural.df <- Fires.sf |>
+  sf::st_drop_geometry() |>
+  dplyr::filter(NWCG_CAUSE_CLASSIFICATION == "Natural") |>
+  dplyr::filter(Month %in% c("May", "Jun", "Jul")) |>
+  dplyr::mutate(YearF = factor(Year, 
+                               levels = as.character(1992:2018), 
+                               ordered = TRUE)) |>
+  dplyr::group_by(YearF, .drop = FALSE) |>
+  dplyr::summarize(nFires = dplyr::n(),
+                   TAB = sum(FIRE_SIZE)) 
+
+SeasonalFires.df <- data.frame(Year = rep(1992:2018, times = 3),
+                               Cause = rep(c("All", "Human", "Natural"), each = 27),
+                               nFires = c(All.df$nFires, Human.df$nFires, Natural.df$nFires),
+                               TAB = c(All.df$TAB, Human.df$TAB, Natural.df$TAB))
+                               
+
+Dryness.df <- TLH.df |>
+  dplyr::filter(Year >= 1992 & Year <= 2018) |>
+  dplyr::filter(month == "Apr") |>
+  dplyr::group_by(Year) |>
+  dplyr::summarize(QlmLastDay = dplyr::last(Qlm),
+                   AvgQlm = mean(Qlm))
+
+SeasonalFires.df <- SeasonalFires.df |>
+  dplyr::left_join(Dryness.df, by = "Year")
+
+readr::write_csv(SeasonalFires.df, 
+                 file = here::here("data", "SeasonalFires.csv"))
+```
+
+Test models
+```{r}
+df <- SeasonalFires.df |>
+  dplyr::filter(Cause == "Human")
+
+xtable::xtable(MASS::glm.nb(nFires ~ QlmLastDay, data = df))
+
+summary(lm(I(log(totalAcresBurned + .01)) ~ QlmLastDay, data = SeasonalFires.df)) 
+```
+
+
+Correlations and scatter plots
+```{r}
+df <- SeasonalFires.df
+
+cor(df$AvgQlm, df$totalAcresBurned) # .15
+cor(df$QlmLastDay, df$totalAcresBurned) #.21
+cor(df$QlmLastDay, df$nFires) # .61
+cor(df$AvgQlm, df$nFires) # .54
+
+ggplot(data = df,
+       mapping = aes(x = QlmLastDay, 
+                     y = nFires, 
+                     label = Year)) +
+  geom_point() +
+  ggrepel::geom_label_repel() +
+  labs(x = "Soil moisture deficit (mm) on April 30th", 
+       y = "Number of fires in the ANF (May-Jul)") +
+  theme_minimal()
+```
+
+Correlation by day of month during April
+```{r}
+df <- SeasonalFires.df
+TLH.df |>
+  dplyr::filter(Year >= 1992 & Year <= 2018) |>
+  dplyr::filter(month == "Apr") |>
+  dplyr::group_by(doy, Year) |>
+  dplyr::mutate(Qlm = Qlm) |>
+  dplyr::select(Year, doy, Qlm) |>
+  dplyr::filter(doy != 91 & doy != 121) |>
+  dplyr::group_by(doy) |>
+  dplyr::summarize(r = cor.test(Qlm, df$nFires)$estimate,
+            rLo = cor.test(Qlm, df$nFires, conf.level = .9)$conf.int[1],
+            rHi = cor.test(Qlm, df$nFires, conf.level = .9)$conf.int[2],
+            rs = cor(Qlm, df$nFires, method = "s")) |>
+  xtable::xtable()
+```
+
+Make a plot
+```{r}
+  ggplot(data = df, 
+         mapping = aes(x = Date, y = r)) +
+  geom_ribbon(aes(ymin = rLo, ymax = rHi), fill = "gray90") +
+  geom_point() +
+  geom_line() +
+  scale_y_continuous(limits = c(0, 1)) +
+#  scale_x_continuous(breaks = c(1,	32,	60,	91, 121, 152, 182, 213, 244, 274, 305, 335),
+#                     labels = month.abb, position = "top") +
+  theme_minimal()
+```
+
+A slight upward trend in the correlation from early to late April but no significant difference.
+
+Continue with `FireCountModel.Rmd`.
 
 Linear trend model. Statistical significance of the trend by month.
 ```{r}
@@ -648,35 +543,6 @@ ggplot(df,
   theme_minimal() 
 ```
 
-Get SOI data and join with TLH.df. LINK NO LONGER WORKS
-```{r}
-SOI.df <- read.csv(file = "https://www.ncdc.noaa.gov/teleconnections/enso/indicators/soi/data.csv",
-                   skip = 1, header = TRUE) %>%
-  mutate(Date = parse_date_time(as.character(Date), "ym"),
-         Year = year(Date),
-         Month = month(Date),
-         month = month(Date, label = TRUE, abbr = TRUE),
-         SOI = Value) %>%
-  dplyr::select(Year, Month, month, SOI)
-
-Joined.df <- TLH.df %>% 
-  dplyr::filter(Year >= 1951) %>%
-  group_by(Year, month) %>%
-  summarize(AvgQlm = mean(Qlm)) %>%
-  dplyr::select(Year, month, AvgQlm) %>%
-  left_join(SOI.df, by = c("Year", "month"))
-
-Joined.df %>%
-  group_by(month) %>%
-  do(tidy(lm(AvgQlm ~ Year + SOI, data = .))) %>%
-  dplyr::filter(term == "Year")
-
-Joined.df %>%
-  group_by(month) %>%
-  do(tidy(lm(AvgQlm ~ Year + SOI, data = .))) %>%
-  dplyr::filter(term == "SOI")
-```
-
 SOI is positively correlated with moisture deficit. La Nina conditions (positive SOI) during winter into spring leads to larger moisture deficits (higher Qlm). The upward trend in Qlm remains significant after accounting for SOI.
 
 In terms of frequency by Drought Index category. Proportion of the year in each drought category.
@@ -699,25 +565,6 @@ TLH.df %>%
        caption = "Period of record: 1941-2020, Data source: NWSFO Tallahassee") 
 ```
 
-Daily
-```{r}
-ggplot(data = TLH.df, 
-       mapping = aes(x = Date2, y = Year, fill = factor(DroughtIndex))) +
-  geom_tile() +
-  scale_y_reverse(breaks = seq(1943, 2020, 4)) +
-  scale_x_date(date_breaks = "month", date_labels = "%b", position = "top") +
-#  scale_fill_ordinal(name = "", direction = 1, alpha = .6) +
-   scale_fill_brewer(palette = "BrBG",
-                       direction = -1,
-                       name = "") +
-  ylab("") + xlab("") +
-  theme_minimal() +
-  guides(fill = guide_legend(reverse = TRUE)) +
-  labs(title = "Daily KBDI category in the Apalachicola National Forest",
-       subtitle = "KDBI = 7-6: Drought, 4-5: Dry, 1-3: Moist, 0: Saturated",
-       caption = "Period of record: 1949-2019, Data source: NWSFO Tallahassee")
-```
-
 Number of days per year with KBDI above 650 (hundredths of an inch) (Qlm = 165.1)
 ```{r}
 library(MASS)
@@ -737,107 +584,3 @@ TLH.df |>
   theme_minimal()
 ```
 
-Combine seasonal fire data with dryness data. Include a column with previous year's total acres burned.
-```{r}
-SeasonalFires <- NaturalFires.sf %>%
-  st_drop_geometry() %>%
-  filter(Month %in% c(5, 6, 7)) %>%
-  mutate(YearF = factor(Year, levels = as.character(1992:2018), ordered = TRUE)) %>%
-  group_by(YearF, .drop = FALSE) %>%
-  summarize(nFires = n(),
-            totalAcresBurned = sum(Size)) %>%
-  mutate(Year = 1992:2018)
-
-SeasonalFires2 <- AllFires.sf %>%
-  st_drop_geometry() %>%
-  filter(Month %in% c(5, 6, 7)) %>%
-  mutate(YearF = factor(Year, levels = as.character(1992:2018), ordered = TRUE)) %>%
-  group_by(YearF, .drop = FALSE) %>%
-  summarize(nFires = n(),
-            totalAcresBurned = sum(Size)) %>%
-  mutate(Year = 1992:2018)
-
-Dryness <- TLH.df %>%
-  dplyr::filter(Year >= 1992 & Year <= 2018) %>%
-  dplyr::filter(month == "Apr") %>%
-  group_by(Year) %>%
-  summarize(QlmLastDay = last(Qlm),
-            AvgQlm = mean(Qlm))
-
-#AprilSOI <- SOI.df %>%
-#  dplyr::filter(Year >= 1992 & Year <= 2018) %>%
-#  dplyr::filter(month == "Apr") %>%
-#  pull(SOI)
-
-PreviousYearBurnArea.df <- Fires.sf |>
-  st_drop_geometry() |>
-  mutate(Date = DISCOVERY_DATE,
-         Year = year(DISCOVERY_DATE),
-         Month = month(DISCOVERY_DATE),
-         BurnYear = Year + (Month >= 5))|>
-  group_by(BurnYear) |>
-  mutate(BurnArea = cumsum(FIRE_SIZE)) |>
-  summarize(BurnArea = last(BurnArea)) |>
-  filter(BurnYear < 2019)
-
-df <- data.frame(Year = Dryness$Year, 
-                 QlmLastDay = Dryness$QlmLastDay,
-                 AvgQlm = Dryness$AvgQlm,
-                 nFires = SeasonalFires$nFires, 
-                 AcresBurned = SeasonalFires$totalAcresBurned,
-                 nFiresAll = SeasonalFires2$nFires,
-                 AcresBurnedAll = SeasonalFires2$totalAcresBurned,
-                 preYearAcresBurned = PreviousYearBurnArea.df$BurnArea)
-#                 AprilSOI = AprilSOI)
-
-write_csv(df, file = "SeasonalForecastModelData.csv")
-```
-
-Correlations and scatter plots.
-```{r}
-cor(df$AvgQlm, df$AcresBurned) # .54
-cor(df$QlmLastDay, df$AcresBurned) #.48
-cor(df$QlmLastDay, df$nFires) # .61
-cor(df$AvgQlm, df$nFires) # .56
-
-ggplot(data = df,
-       mapping = aes(x = QlmLastDay, y = nFires, label = Year)) +
-  geom_point() +
-  geom_label_repel() +
-  labs(x = "Soil moisture deficit (mm) on April 30th", y = "Number of fires in the ANF (May-Jul)") +
-  theme_minimal()
-```
-
-Correlation by day of month during April.
-```{r}
-TLH.df |>
-  dplyr::filter(Year >= 1992 & Year <= 2018) |>
-  dplyr::filter(month == "Apr") |>
-  group_by(doy, Year) |>
-  mutate(Qlm = Qlm) |>
-  dplyr::select(Year, doy, Qlm) |>
-  filter(doy != 91 & doy != 121) |>
-  group_by(doy) |>
-  summarize(r = cor.test(Qlm, SeasonalFires$nFires)$estimate,
-            rLo = cor.test(Qlm, SeasonalFires$nFires, conf.level = .9)$conf.int[1],
-            rHi = cor.test(Qlm, SeasonalFires$nFires, conf.level = .9)$conf.int[2],
-            rs = cor(Qlm, SeasonalFires$nFires, method = "s")) |>
-  xtable()
-```
-
-Make a plot
-```{r}
-  ggplot(data = df, 
-         mapping = aes(x = Date, y = r)) +
-  geom_ribbon(aes(ymin = rLo, ymax = rHi), fill = "gray90") +
-  geom_point() +
-  geom_line() +
-  scale_y_continuous(limits = c(0, 1)) +
-#  scale_x_continuous(breaks = c(1,	32,	60,	91, 121, 152, 182, 213, 244, 274, 305, 335),
-#                     labels = month.abb, position = "top") +
-  theme_minimal()
-```
-
-A slight upward trend in the correlation from early to late April but no significant difference.
-
-Continue with `PredictionModel.Rmd` and `GriddedClimateData.Rmd`.
