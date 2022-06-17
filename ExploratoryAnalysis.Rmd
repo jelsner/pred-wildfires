@@ -410,34 +410,37 @@ readr::write_csv(SeasonalFires.df,
                  file = here::here("data", "SeasonalFires.csv"))
 ```
 
-Test models
-```{r}
-df <- SeasonalFires.df |>
-  dplyr::filter(Cause == "Human")
-
-xtable::xtable(MASS::glm.nb(nFires ~ QlmLastDay, data = df))
-
-summary(lm(I(log(totalAcresBurned + .01)) ~ QlmLastDay, data = SeasonalFires.df)) 
-```
-
-
 Correlations and scatter plots
 ```{r}
-df <- SeasonalFires.df
+SeasonalFires.df |>
+  dplyr::group_by(Cause) |>
+  dplyr::summarize(rQlmFires = cor(QlmLastDay, nFires),
+                   rQlmTAB = cor(QlmLastDay, TAB))
 
-cor(df$AvgQlm, df$totalAcresBurned) # .15
-cor(df$QlmLastDay, df$totalAcresBurned) #.21
-cor(df$QlmLastDay, df$nFires) # .61
-cor(df$AvgQlm, df$nFires) # .54
-
-ggplot(data = df,
-       mapping = aes(x = QlmLastDay, 
+SeasonalFires.df |>
+ggplot(mapping = aes(x = QlmLastDay, 
                      y = nFires, 
                      label = Year)) +
   geom_point() +
-  ggrepel::geom_label_repel() +
+ # ggrepel::geom_label_repel() +
+  facet_wrap(~ Cause) +
+  geom_smooth(span = .95, se = FALSE) +
   labs(x = "Soil moisture deficit (mm) on April 30th", 
        y = "Number of fires in the ANF (May-Jul)") +
+  theme_minimal()
+
+SeasonalFires.df |> 
+  dplyr::mutate(logTAB = log(TAB + .1)) |>
+ggplot(mapping = aes(x = QlmLastDay, 
+                     y = logTAB, 
+                     label = Year)) +
+  geom_point() +
+ # ggrepel::geom_label_repel() +
+ # scale_y_log10() +
+  facet_wrap(~ Cause) +
+  geom_smooth(method = lm, se = FALSE) +
+  labs(x = "Soil moisture deficit (mm) on April 30th", 
+       y = "Log of total acres burned in the ANF (May-Jul)") +
   theme_minimal()
 ```
 
@@ -476,7 +479,18 @@ A slight upward trend in the correlation from early to late April but no signifi
 
 Continue with `FireCountModel.Rmd`.
 
-Linear trend model. Statistical significance of the trend by month.
+Test models
+```{r}
+df <- SeasonalFires.df |>
+  dplyr::filter(Cause == "Human")
+
+xtable::xtable(MASS::glm.nb(nFires ~ QlmLastDay, data = df))
+
+summary(lm(I(log(totalAcresBurned + .01)) ~ QlmLastDay, data = SeasonalFires.df)) 
+```
+
+
+Statistical significance of the trend by month.
 ```{r}
 summary(lm(Qlm ~ Date, data = TLH.df)) # this model assumes daily Qlm are independent (they are certainly not)
 
